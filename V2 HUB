@@ -1,1 +1,103 @@
-V2 HUB
+--[[
+  V2 HUB GUI com Noclip
+  Observação: Clique no ícone da GUI para abrir/fechar o painel.
+  Clique no botão "Noclip" para ativar/desativar o noclip.
+--]]
+
+local player = game.Players.LocalPlayer
+local noclipActive = false
+local noclipConnection
+
+-- Criando a ScreenGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "V2HUB"
+screenGui.Parent = player.PlayerGui
+
+-- Botão principal (abre/fecha o painel)
+local mainButton = Instance.new("TextButton")
+mainButton.Size = UDim2.new(0, 100, 0, 40)
+mainButton.Position = UDim2.new(0, 10, 0, 10)
+mainButton.Text = "V2 HUB"
+mainButton.BackgroundColor3 = Color3.fromRGB(30,30,30)
+mainButton.TextColor3 = Color3.new(1,1,1)
+mainButton.Parent = screenGui
+
+-- Painel (inicialmente invisível)
+local panel = Instance.new("Frame")
+panel.Size = UDim2.new(0, 200, 0, 120)
+panel.Position = UDim2.new(0, 120, 0, 10)
+panel.BackgroundColor3 = Color3.fromRGB(50,50,50)
+panel.Visible = false
+panel.Parent = screenGui
+
+-- Botão Noclip
+local noclipButton = Instance.new("TextButton")
+noclipButton.Size = UDim2.new(0, 160, 0, 40)
+noclipButton.Position = UDim2.new(0, 20, 0, 30)
+noclipButton.Text = "Noclip"
+noclipButton.BackgroundColor3 = Color3.fromRGB(60,60,60)
+noclipButton.TextColor3 = Color3.new(1,1,1)
+noclipButton.Parent = panel
+
+-- Observação
+local obs = Instance.new("TextLabel")
+obs.Size = UDim2.new(0, 160, 0, 30)
+obs.Position = UDim2.new(0, 20, 0, 80)
+obs.Text = "Clique na GUI para fechar"
+obs.BackgroundTransparency = 1
+obs.TextColor3 = Color3.new(1,1,1)
+obs.TextScaled = true
+obs.Parent = panel
+
+-- Abrir/Fechar painel
+mainButton.MouseButton1Click:Connect(function()
+    panel.Visible = not panel.Visible
+end)
+
+-- Função Noclip
+local function enableNoclip()
+    noclipActive = true
+    noclipButton.Text = "Noclip [Ativado]"
+    noclipConnection = game:GetService("RunService").Stepped:Connect(function()
+        if noclipActive and player.Character then
+            for _, part in pairs(player.Character:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide == true then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end)
+end
+
+local function disableNoclip()
+    noclipActive = false
+    noclipButton.Text = "Noclip"
+    if noclipConnection then
+        noclipConnection:Disconnect()
+        noclipConnection = nil
+    end
+    -- Restaurar colisão (opcional)
+    if player.Character then
+        for _, part in pairs(player.Character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = true
+            end
+        end
+    end
+end
+
+-- Alternar Noclip
+noclipButton.MouseButton1Click:Connect(function()
+    if not noclipActive then
+        enableNoclip()
+    else
+        disableNoclip()
+    end
+end)
+
+-- Fechar painel ao clicar fora (clicando no botão principal de novo)
+mainButton.MouseButton1Click:Connect(function()
+    if panel.Visible == false and noclipActive then
+        disableNoclip()
+    end
+end)
