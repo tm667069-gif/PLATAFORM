@@ -1,0 +1,322 @@
+-- Script pronto para executores (ex.: Delta).
+-- O que ele faz:
+--  - Cria uma pequena GUI em CoreGui com texto (TextSize = 12) e indicador de status do loadstring.
+--  - Botão "APELUDO HUB" para recarregar o script remoto.
+--  - Botão "Definir Velocidade" + TextBox para definir a velocidade do fly.
+--  - Implementa um fly local simples que é alternado com a tecla F e usa a velocidade definida no TextBox.
+-- Cole e execute no seu executor Delta.
+
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+
+local player = Players.LocalPlayer
+
+-- Remove GUI anterior se existir
+local EXISTING = CoreGui:FindFirstChild("APELUDO_HUB_Indicator")
+if EXISTING then
+    pcall(function() EXISTING:Destroy() end)
+end
+
+-- Configs iniciais do fly
+local flySpeed = 12 -- valor padrão (você pode mudar no TextBox)
+local flyEnabled = false
+local flyBodyVelocity = nil
+local flyConnection = nil
+local verticalSpeed = 0 -- usado para subir/descer com espaço/shift
+
+-- Cria GUI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "APELUDO_HUB_Indicator"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = CoreGui
+
+local holder = Instance.new("Frame")
+holder.Name = "Holder"
+holder.Size = UDim2.new(0, 320, 0, 34)
+holder.Position = UDim2.new(0, 8, 0, 8)
+holder.BackgroundTransparency = 1
+holder.Parent = screenGui
+
+local label = Instance.new("TextButton")
+label.Name = "Label"
+label.Size = UDim2.new(0, 140, 0, 34)
+label.Position = UDim2.new(0, 0, 0, 0)
+label.BackgroundTransparency = 1
+label.Text = "APELUDO HUB"
+label.Font = Enum.Font.SourceSans
+label.TextSize = 12
+label.TextColor3 = Color3.fromRGB(255, 255, 255)
+label.TextXAlignment = Enum.TextXAlignment.Left
+label.TextYAlignment = Enum.TextYAlignment.Center
+label.AutoButtonColor = false
+label.Parent = holder
+
+local indicator = Instance.new("Frame")
+indicator.Name = "Indicator"
+indicator.Size = UDim2.new(0, 12, 0, 12)
+indicator.Position = UDim2.new(0, 150, 0, 11)
+indicator.BackgroundColor3 = Color3.fromRGB(240, 200, 0)
+indicator.BorderSizePixel = 0
+indicator.Parent = holder
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 3)
+corner.Parent = indicator
+
+-- TextBox para velocidade
+local speedBox = Instance.new("TextBox")
+speedBox.Name = "SpeedBox"
+speedBox.Size = UDim2.new(0, 70, 0, 24)
+speedBox.Position = UDim2.new(0, 170, 0, 5)
+speedBox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+speedBox.TextColor3 = Color3.fromRGB(255,255,255)
+speedBox.PlaceholderText = tostring(flySpeed)
+speedBox.Text = "" -- vazio por padrão
+speedBox.Font = Enum.Font.SourceSans
+speedBox.TextSize = 12
+speedBox.ClearTextOnFocus = false
+speedBox.Parent = holder
+
+local setButton = Instance.new("TextButton")
+setButton.Name = "SetButton"
+setButton.Size = UDim2.new(0, 120, 0, 24)
+setButton.Position = UDim2.new(0, 250, 0, 5)
+setButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+setButton.TextColor3 = Color3.fromRGB(255,255,255)
+setButton.Font = Enum.Font.SourceSans
+setButton.TextSize = 12
+setButton.Text = "Definir Velocidade"
+setButton.AutoButtonColor = true
+setButton.Parent = holder
+
+-- Função de requisição HTTP com fallback para diferentes exploits
+local function httpGet(url)
+    if type(syn) == "table" and type(syn.request) == "function" then
+        local ok, res = pcall(function()
+            return syn.request({Url = url, Method = "GET"}).Body
+        end)
+        return ok, res
+    elseif type(http) == "table" and type(http.request) == "function" then
+        local ok, res = pcall(function()
+            return http.request({Url = url, Method = "GET"}).Body
+        end)
+        return ok, res
+    elseif type(request) == "function" then
+        local ok, res = pcall(function()
+            return request({Url = url, Method = "GET"}).Body
+        end)
+        return ok, res
+    else
+        local ok, res = pcall(function()
+            return game:HttpGet(url)
+        end)
+        return ok, res
+    end
+end
+
+-- animação de pulso enquanto carrega
+local function startPulse(obj, c1, c2)
+    local info = TweenInfo.new(0.7, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+    local tween = TweenService:Create(obj, info, {BackgroundColor3 = c2})
+    pcall(function() obj.BackgroundColor3 = c1 end)
+    tween:Play()
+    return tween
+end
+
+local function stopPulse(twn)
+    if twn and type(twn.Cancel) == "function" then
+        pcall(function() twn:Cancel() end)
+    end
+end
+
+-- Carrega e executa o loadstring remoto (APELUDO HUB)
+local function runRemote(url)
+    local loadingTween = startPulse(indicator, Color3.fromRGB(240,200,0), Color3.fromRGB(200,160,0))
+    label.Text = "APELUDO HUB (carregando...)"
+
+    local ok, body = httpGet(url)
+    stopPulse(loadingTween)
+
+    if not ok or not body or #body == 0 then
+        local t = TweenService:Create(indicator, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(220,40,40)})
+        t:Play()
+        indicator.BackgroundColor3 = Color3.fromRGB(180,30,30)
+        label.Text = "APELUDO HUB (erro)"
+        warn("[APELUDO HUB] Erro ao baixar o script: ", tostring(body))
+        return false, "http_error"
+    end
+
+    local loader = loadstring or load
+    if not loader then
+        local t = TweenService:Create(indicator, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(220,40,40)})
+        t:Play()
+        indicator.BackgroundColor3 = Color3.fromRGB(180,30,30)
+        label.Text = "APELUDO HUB (erro)"
+        warn("[APELUDO HUB] Nenhum loader disponível (loadstring/load).")
+        return false, "no_loader"
+    end
+
+    local ok2, fn_or_err = pcall(function() return loader(body) end)
+    if not ok2 or type(fn_or_err) ~= "function" then
+        local t = TweenService:Create(indicator, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(220,40,40)})
+        t:Play()
+        indicator.BackgroundColor3 = Color3.fromRGB(180,30,30)
+        label.Text = "APELUDO HUB (erro)"
+        warn("[APELUDO HUB] Erro ao compilar o script: ", tostring(fn_or_err))
+        return false, "compile_error"
+    end
+
+    local ok3, err3 = pcall(function() fn_or_err() end)
+    if not ok3 then
+        local t = TweenService:Create(indicator, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(220,40,40)})
+        t:Play()
+        indicator.BackgroundColor3 = Color3.fromRGB(180,30,30)
+        label.Text = "APELUDO HUB (erro)"
+        warn("[APELUDO HUB] Erro ao executar o script: ", tostring(err3))
+        return false, "runtime_error"
+    end
+
+    local t = TweenService:Create(indicator, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(0,200,80)})
+    t:Play()
+    indicator.BackgroundColor3 = Color3.fromRGB(0,180,70)
+    label.Text = "APELUDO HUB"
+    return true
+end
+
+-- URL do script remoto (usei a que você passou)
+local url = "https://raw.githubusercontent.com/samaratopdabalada-crypto/Hub/refs/heads/main/APELUDO%20HUB%20V2"
+
+-- Carregamento automático inicial
+spawn(function()
+    wait(0.1)
+    runRemote(url)
+end)
+
+-- Clique para recarregar manualmente
+label.MouseButton1Click:Connect(function()
+    label.Text = "APELUDO HUB (recarregando...)"
+    runRemote(url)
+end)
+
+-- Funções do fly local
+local function enableFly()
+    if flyEnabled then return end
+    local char = player.Character or player.CharacterAdded:Wait()
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return end
+
+    flyBodyVelocity = Instance.new("BodyVelocity")
+    flyBodyVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+    flyBodyVelocity.P = 1e4
+    flyBodyVelocity.Velocity = Vector3.new(0,0,0)
+    flyBodyVelocity.Parent = hrp
+
+    flyEnabled = true
+    hum.PlatformStand = true
+
+    flyConnection = RunService.RenderStepped:Connect(function(dt)
+        if not flyEnabled then return end
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+        local moveDir = hum.MoveDirection -- já em relação ao mundo; inclui forward/right input
+        -- vertical control via space/shift are tracked in verticalSpeed
+        local vel = (moveDir * flySpeed) + Vector3.new(0, verticalSpeed * flySpeed, 0)
+        -- suavizar velocidade (opcional)
+        flyBodyVelocity.Velocity = vel
+    end)
+end
+
+local function disableFly()
+    if not flyEnabled then return end
+    flyEnabled = false
+    if flyConnection then
+        pcall(function() flyConnection:Disconnect() end)
+        flyConnection = nil
+    end
+    if flyBodyVelocity then
+        pcall(function() flyBodyVelocity:Destroy() end)
+        flyBodyVelocity = nil
+    end
+    local char = player.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.PlatformStand = false
+        end
+    end
+end
+
+-- Alterna fly com tecla F
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        local key = input.KeyCode
+        if key == Enum.KeyCode.F then
+            if flyEnabled then
+                disableFly()
+            else
+                enableFly()
+            end
+        elseif key == Enum.KeyCode.Space then
+            -- sobe enquanto space está pressionada
+            verticalSpeed = 1
+        elseif key == Enum.KeyCode.LeftShift or key == Enum.KeyCode.RightShift then
+            verticalSpeed = -1
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input, gameProcessed)
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then
+            verticalSpeed = 0
+        end
+    end
+end)
+
+-- Ao clicar no botão "Definir Velocidade", aplica o valor do TextBox ao flySpeed
+setButton.MouseButton1Click:Connect(function()
+    local txt = speedBox.Text
+    local num = tonumber(txt)
+    if num and num > 0 then
+        flySpeed = num
+        -- feedback rápido: piscada do indicador e texto temporário
+        local originalText = label.Text
+        label.Text = "Velocidade definida: " .. tostring(flySpeed)
+        local t = TweenService:Create(indicator, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(0,200,80)})
+        t:Play()
+        delay(1.2, function()
+            pcall(function() label.Text = originalText end)
+            local t2 = TweenService:Create(indicator, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(240,200,0)})
+            t2:Play()
+            indicator.BackgroundColor3 = Color3.fromRGB(240,200,0)
+        end)
+    else
+        -- inválido: feedback vermelho
+        local originalText = label.Text
+        label.Text = "Valor inválido"
+        local t = TweenService:Create(indicator, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(220,40,40)})
+        t:Play()
+        delay(1.2, function()
+            pcall(function() label.Text = originalText end)
+            local t2 = TweenService:Create(indicator, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(240,200,0)})
+            t2:Play()
+            indicator.BackgroundColor3 = Color3.fromRGB(240,200,0)
+        end)
+    end
+end)
+
+-- Cleanup ao trocar de personagem
+player.CharacterAdded:Connect(function(char)
+    -- garante que fly é desativado ao reaparecer
+    disableFly()
+end)
+
+-- Dica de uso no próprio script:
+--  - Pressione F para ativar/desativar o fly.
+--  - Use o TextBox para inserir a velocidade desejada (ex.: 12) e clique "Definir Velocidade".
+--  - Space para subir, Shift para descer enquanto o fly está ativo.
