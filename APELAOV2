@@ -1,0 +1,330 @@
+-- Proteção para reaparecer após morte (sem funções de ragdoll)
+-- Versão corrigida e melhorada: compatível com executores tipo "Delta" (rodando como LocalScript/cliente)
+-- Melhorias aplicadas:
+--  - Espera por PlayerGui (mais robusto)
+--  - Usa RunService.Heartbeat (loop físico mais estável)
+--  - Suporte a movimento W/A/S/D + Space (subir) + Ctrl (descer)
+--  - Limpeza correta de BodyVelocity/BodyGyro e desconexões no respawn/remover personagem
+--  - Validação e persistência simples da velocidade enquanto o cliente estiver vivo
+--  - Evita múltiplos loops de voo rodando simultaneamente
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+if not player then
+    -- Em alguns executores a LocalPlayer pode demorar; tentamos esperar
+    player = Players:WaitForChild("LocalPlayer", 10)
+    if not player then
+        return -- sem player, aborta
+    end
+end
+
+-- Estado global do voo
+local flying = false
+local bp, bg
+local hbConnection
+local SPEED = 50 -- padrão
+local MIN_SPEED, MAX_SPEED = 10, 500
+
+-- Atualiza display de velocidade (será preenchido após criação do GUI)
+local velDisplayRef
+
+local function atualizarDisplay()
+    if velDisplayRef and velDisplayRef.Parent then
+        velDisplayRef.Text = tostring(math.floor(SPEED))
+    end
+end
+
+local function setSpeed(n)
+    if type(n) ~= "number" then return end
+    if n < MIN_SPEED then n = MIN_SPEED end
+    if n > MAX_SPEED then n = MAX_SPEED end
+    SPEED = n
+    atualizarDisplay()
+end
+
+local function stopFly()
+    flying = false
+    if hbConnection then
+        pcall(function() hbConnection:Disconnect() end)
+        hbConnection = nil
+    end
+    if bp and bp.Parent then
+        pcall(function() bp:Destroy() end)
+        bp = nil
+    end
+    if bg and bg.Parent then
+        pcall(function() bg:Destroy() end)
+        bg = nil
+    end
+end
+
+local function startFly()
+    if flying then return end
+    local char = player.Character or player.CharacterAdded:Wait()
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    -- Remove instâncias antigas, se houver
+    for _, inst in ipairs(hrp:GetChildren()) do
+        if inst:IsA("BodyVelocity") or inst:IsA("BodyGyro") then
+            pcall(function() inst:Destroy() end)
+        end
+    end
+
+    bp = Instance.new("BodyVelocity")
+    -- usar valores muito altos para MaxForce para garantir efeito em diferentes jogos
+    bp.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    bp.Velocity = Vector3.new(0, 0, 0)
+    bp.Parent = hrp
+
+    bg = Instance.new("BodyGyro")
+    bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    bg.CFrame = workspace.CurrentCamera.CFrame
+    bg.Parent = hrp
+
+    flying = true
+
+    -- Loop por Heartbeat para física mais estável
+    hbConnection = RunService.Heartbeat:Connect(function()
+        if not flying then return end
+        local charNow = player.Character
+        if not charNow or not charNow:FindFirstChild("HumanoidRootPart") then
+            stopFly()
+            return
+        end
+        local hrpNow = charNow.HumanoidRootPart
+        local camera = workspace.CurrentCamera
+        if not camera then return end
+
+        -- Captura entradas WASD + vertical
+        local forward = 0
+        local right = 0
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then forward = forward + 1 end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then forward = forward - 1 end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then right = right + 1 end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then right = right - 1 end
+
+        local up = 0
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then up = up + 1 end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.C) then up = up - 1 end
+
+        -- Calcula vetor de movimento relativo à câmera
+        local look = camera.CFrame.LookVector
+        local rightVec = camera.CFrame.RightVector
+        local dir = (look * forward) + (rightVec * right)
+        local moveVec = Vector3.new(0,0,0)
+        if dir.Magnitude > 0 then
+            moveVec = dir.Unit * SPEED
+        end
+        local verticalVec = Vector3.new(0, up * SPEED, 0)
+        -- Aplica velocidade final
+        bp.Velocity = moveVec + verticalVec
+
+        -- Alinha orientação ao olhar da câmera (não força rotação estranha)
+        pcall(function()
+            bg.CFrame = CFrame.new(hrpNow.Position, hrpNow.Position + camera.CFrame.LookVector)
+        end)
+    end)
+end
+
+-- Função que cria toda GUI (criar/replicar)
+local function criarGUI()
+    local playerGui = player:WaitForChild("PlayerGui")
+
+    -- Remove GUI antiga se existir
+    local old = playerGui:FindFirstChild("APELUDO_HUB_GUI")
+    if old then
+        pcall(function() old:Destroy() end)
+    end
+
+    -- ScreenGui principal
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "APELUDO_HUB_GUI"
+    gui.ResetOnSpawn = false
+    gui.Parent = playerGui
+
+    -- Bola fixa
+    local bolaBtn = Instance.new("Frame")
+    bolaBtn.Size = UDim2.new(0, 60, 0, 60)
+    bolaBtn.Position = UDim2.new(0.1, 0, 0.1, 0)
+    bolaBtn.BackgroundColor3 = Color3.new(0,0,0)
+    bolaBtn.BackgroundTransparency = 0
+    bolaBtn.BorderSizePixel = 0
+    bolaBtn.Name = "BolaApeludo"
+    bolaBtn.Parent = gui
+    bolaBtn.ClipsDescendants = true
+    local uicorner = Instance.new("UICorner")
+    uicorner.CornerRadius = UDim.new(1,0)
+    uicorner.Parent = bolaBtn
+
+    local bolaBtnLabel = Instance.new("TextLabel")
+    bolaBtnLabel.Size = UDim2.new(1,0,1,0)
+    bolaBtnLabel.Position = UDim2.new(0,0,0,0)
+    bolaBtnLabel.BackgroundTransparency = 1
+    bolaBtnLabel.Text = "APELUDO HUB"
+    bolaBtnLabel.TextColor3 = Color3.fromRGB(255,255,255)
+    bolaBtnLabel.TextScaled = true
+    bolaBtnLabel.Font = Enum.Font.GothamBold
+    bolaBtnLabel.Parent = bolaBtn
+
+    local clickBtn = Instance.new("TextButton")
+    clickBtn.Size = UDim2.new(1,0,1,0)
+    clickBtn.Position = UDim2.new(0,0,0,0)
+    clickBtn.BackgroundTransparency = 1
+    clickBtn.Text = ""
+    clickBtn.Parent = bolaBtn
+    clickBtn.ZIndex = 10
+
+    -- Frame principal (apelao)
+    local apelaoFrame = Instance.new("Frame")
+    apelaoFrame.Size = UDim2.new(0, 220, 0, 180)
+    apelaoFrame.Position = UDim2.new(0.5, -110, 0.5, -90)
+    apelaoFrame.BackgroundColor3 = Color3.fromRGB(40,40,40)
+    apelaoFrame.Visible = false
+    apelaoFrame.Parent = gui
+    apelaoFrame.Name = "apelao"
+
+    local titulo = Instance.new("TextLabel")
+    titulo.Size = UDim2.new(1,0,0.14,0)
+    titulo.Position = UDim2.new(0,0,0,0)
+    titulo.BackgroundTransparency = 1
+    titulo.Text = "GUI APELAO"
+    titulo.TextColor3 = Color3.fromRGB(255,255,127)
+    titulo.TextScaled = true
+    titulo.Parent = apelaoFrame
+
+    -- Botão de voo
+    local botao = Instance.new("TextButton")
+    botao.Size = UDim2.new(0.8,0,0.14,0)
+    botao.Position = UDim2.new(0.1,0,0.16,0)
+    botao.Text = "Ativar"
+    botao.BackgroundColor3 = Color3.fromRGB(0,170,0)
+    botao.TextColor3 = Color3.new(1,1,1)
+    botao.TextScaled = true
+    botao.Parent = apelaoFrame
+
+    -- Botão Velocidade + painel
+    local botaoVel = Instance.new("TextButton")
+    botaoVel.Size = UDim2.new(0.8,0,0.14,0)
+    botaoVel.Position = UDim2.new(0.1,0,0.34,0)
+    botaoVel.Text = "Velocidade"
+    botaoVel.BackgroundColor3 = Color3.fromRGB(120,120,120)
+    botaoVel.TextColor3 = Color3.new(1,1,1)
+    botaoVel.TextScaled = true
+    botaoVel.Parent = apelaoFrame
+
+    local velPanel = Instance.new("Frame")
+    velPanel.Size = UDim2.new(0.9,0,0.4,0)
+    velPanel.Position = UDim2.new(0.05,0,0.52,0)
+    velPanel.BackgroundColor3 = Color3.fromRGB(50,50,50)
+    velPanel.Visible = false
+    velPanel.Parent = apelaoFrame
+
+    local velTitle = Instance.new("TextLabel")
+    velTitle.Size = UDim2.new(1,0,0.2,0)
+    velTitle.Position = UDim2.new(0,0,0,0)
+    velTitle.BackgroundTransparency = 1
+    velTitle.Text = "Velocidade de Voo"
+    velTitle.TextColor3 = Color3.fromRGB(255,255,255)
+    velTitle.TextScaled = true
+    velTitle.Parent = velPanel
+
+    local velDisplay = Instance.new("TextLabel")
+    velDisplay.Size = UDim2.new(0.45,0,0.28,0)
+    velDisplay.Position = UDim2.new(0.025,0,0.28,0)
+    velDisplay.BackgroundColor3 = Color3.fromRGB(70,70,70)
+    velDisplay.TextColor3 = Color3.new(1,1,1)
+    velDisplay.TextScaled = true
+    velDisplay.Parent = velPanel
+    velDisplayRef = velDisplay -- referencia global para atualizacao
+
+    local velMinus = Instance.new("TextButton")
+    velMinus.Size = UDim2.new(0.2,0,0.28,0)
+    velMinus.Position = UDim2.new(0.5,0,0.28,0)
+    velMinus.Text = "-"
+    velMinus.TextScaled = true
+    velMinus.BackgroundColor3 = Color3.fromRGB(150,50,50)
+    velMinus.Parent = velPanel
+
+    local velPlus = Instance.new("TextButton")
+    velPlus.Size = UDim2.new(0.2,0,0.28,0)
+    velPlus.Position = UDim2.new(0.73,0,0.28,0)
+    velPlus.Text = "+"
+    velPlus.TextScaled = true
+    velPlus.BackgroundColor3 = Color3.fromRGB(50,150,50)
+    velPlus.Parent = velPanel
+
+    local velTextBox = Instance.new("TextBox")
+    velTextBox.Size = UDim2.new(0.9,0,0.24,0)
+    velTextBox.Position = UDim2.new(0.05,0,0.64,0)
+    velTextBox.PlaceholderText = "Digite a velocidade (ex: 50)"
+    velTextBox.ClearTextOnFocus = false
+    velTextBox.Text = ""
+    velTextBox.TextScaled = true
+    velTextBox.Parent = velPanel
+
+    -- Ações dos botões
+    clickBtn.MouseButton1Click:Connect(function()
+        apelaoFrame.Visible = not apelaoFrame.Visible
+    end)
+
+    botaoVel.MouseButton1Click:Connect(function()
+        velPanel.Visible = not velPanel.Visible
+    end)
+
+    velPlus.MouseButton1Click:Connect(function()
+        setSpeed(SPEED + 10)
+    end)
+
+    velMinus.MouseButton1Click:Connect(function()
+        setSpeed(SPEED - 10)
+    end)
+
+    velTextBox.FocusLost:Connect(function(enterPressed)
+        local v = tonumber(velTextBox.Text)
+        if v then
+            setSpeed(v)
+        end
+        velTextBox.Text = ""
+    end)
+
+    atualizarDisplay()
+
+    botao.MouseButton1Click:Connect(function()
+        if not flying then
+            startFly()
+            botao.Text = "Desativar"
+            botao.BackgroundColor3 = Color3.fromRGB(170,0,0)
+        else
+            stopFly()
+            botao.Text = "Ativar"
+            botao.BackgroundColor3 = Color3.fromRGB(0,170,0)
+        end
+    end)
+end
+
+-- Criar GUI ao entrar no jogo
+criarGUI()
+
+-- Garantir recriação da GUI ao respawn do personagem
+player.CharacterAdded:Connect(function()
+    -- limpa voo anterior caso persista
+    stopFly()
+    wait(0.5)
+    criarGUI()
+end)
+
+-- Limpa voo quando o personagem for removido (antes do respawn)
+player.CharacterRemoving:Connect(function()
+    stopFly()
+end)
+
+-- Caso o script seja re-executado, garante que não haja flight residual
+-- (isso já é feito nas funções start/stop, mas reforça)
+stopFly()
+atualizarDisplay()
